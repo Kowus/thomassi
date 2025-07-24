@@ -1,7 +1,7 @@
 #include <MPU6050_tockn.h>
 #include <Wire.h>
 #include <Math.h>
-#include <string.h>
+#include "helpers.h"
 
 // ESP
 // const int in1 = 16, in2 = 17, in3 = 18, in4 = 19, led = 13;
@@ -24,8 +24,11 @@ String commandData = "";
 bool gotData = false;
 int provisionalDuration = 0;
 float tripDistance = 0.0f;
+float prevAccX = 0, prevAccY = 0;
 
 MPU6050 gyro(Wire);
+Command command_u;
+
 void setup()
 {
   // put your setup code here, to run once:
@@ -61,12 +64,32 @@ void loop()
 
     yield();
   }
-
+  /*
+   * According to available spec, process only the following commands:
+   * <Command><SubCommand> where Command is one of:
+   * f - forward
+   * b - backward
+   * l - left
+   * r - right
+   * and SubCommand is an integer value representing the distance in cm
+   * or angle in degrees for turns.
+   * For example:
+   * f100 - move forward 100 cm
+   * b50 - move backward 50 cm
+   * l90 - turn left 90 degrees
+   * r45 - turn right 45 degrees
+   * System should not respond to any other commands.
+   * If no command is received, the system should not do anything.
+   * If a command is received, it should be processed immediately.
+   * If a command is received while another command is being processed,
+   * the new command should not override the previous one.
+   * The system should wait for the previous command to finish.
+   */
   if (gotData)
   {
     if (commandData[0])
     {
-      Serial.println("Got Data");
+      // Serial.println("Got Data");
       cmd = commandData[0];
       dir = commandData[1];
       String subCmd = commandData.substring(2, 5);
@@ -88,112 +111,4 @@ void loop()
 
     gotData = false;
   }
-
-  gyro.update();
-  float thetaX = gyro.getGyroAngleX();
-  float thetaY = gyro.getGyroAngleY();
-  float thetaZ = gyro.getGyroAngleZ();
-  float accX = gyro.getAccX();
-  float accY = gyro.getAccY();
-  float theta = atanf(accY / accX) * RAD_TO_DEG;
-  float argL = sqrt(accX * accX + accY * accY);
-  long currT = micros();
-  float t = currT / 1.0e6;
-  float deltaT = ((float)(currT - prevT)) / 1.0e6;
-  prevT = currT;
-
-  float numResolved = argL * cos(theta * DEG_TO_RAD);
-  float denResolved = argL * sin(theta * DEG_TO_RAD);
-  float accelerationResolved = numResolved + denResolved;
-  float velocityResolved = accelerationResolved * deltaT;
-  float distanceResolved = velocityResolved * deltaT;
-  tripDistance += distanceResolved;
-
-  // PID Cooefficients
-  float kp = 0.025;
-  float ki = 0.12;
-
-  double thetaError = thetaDesired - thetaZ;
-  double teRad = thetaError * DEG_TO_RAD;
-  double sinTRad = sin(teRad);
-
-  float uSpeed = (kp * sinTRad * nominalSpeed * RAD_TO_DEG);
-  // float uAc = nominalSpeed
-
-  int vSpeed = (int)fabs(uSpeed);
-  if (vSpeed > 255)
-    vSpeed = 255;
-  // float sinError = sinh(thetaError);
-  /*
-  Serial.print(thetaZ);
-  Serial.print(",\t");
-  Serial.print(thetaError);
-  Serial.print(",\t");
-  Serial.print(teRad);
-  Serial.print(",\t");
-  Serial.print(sinTRad);
-  Serial.print(",\t");
-  Serial.print(uSpeed);
-  Serial.print(",\t");
-  Serial.println(vSpeed);
-  */
-
-  if (cmd && cmd != 's')
-  {
-    if (thetaError < (-1 * error_tolerance))
-    {
-      // LEFT
-      Serial.println("LEFT");
-      analogWrite(in1, vSpeed);
-      analogWrite(in2, LOW);
-      analogWrite(in3, LOW);
-      analogWrite(in4, vSpeed);
-    }
-    else if (thetaError > error_tolerance)
-    {
-      // RIGHT
-      Serial.println("RIGHT");
-      analogWrite(in1, LOW);
-      analogWrite(in2, vSpeed);
-      analogWrite(in3, vSpeed);
-      analogWrite(in4, LOW);
-    }
-    else
-    {
-      // FORWARD
-      vSpeed = 60;
-      if (dir == '1')
-      {
-        Serial.println("FORWARD");
-        analogWrite(in1, LOW);
-        analogWrite(in2, vSpeed);
-        analogWrite(in3, LOW);
-        analogWrite(in4, vSpeed);
-      }
-      else
-      {
-        Serial.println("REVERSE");
-        analogWrite(in1, vSpeed);
-        analogWrite(in2, LOW);
-        analogWrite(in3, vSpeed);
-        analogWrite(in4, LOW);
-      }
-    }
-  }
-  else
-  {
-    // STOP
-    Serial.println("STOPPED");
-    digitalWrite(in1, LOW);
-    digitalWrite(in2, LOW);
-    digitalWrite(in3, LOW);
-    digitalWrite(in4, LOW);
-  }
-  Serial.println(tripDistance);
-
-  // forward
-  // analogWrite(in1, vSpeed);
-  // digitalWrite(in2, LOW);
-  // analogWrite(in3, vSpeed);
-  // digitalWrite(in4, LOW);
 }
