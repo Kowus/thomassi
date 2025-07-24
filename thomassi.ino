@@ -1,7 +1,7 @@
 #include <MPU6050_tockn.h>
 #include <Wire.h>
 #include <Math.h>
-#include <string.h>
+#include "helpers.h"
 
 // ESP
 // const int in1 = 16, in2 = 17, in3 = 18, in4 = 19, led = 13;
@@ -24,8 +24,11 @@ String commandData = "";
 bool gotData = false;
 int provisionalDuration = 0;
 float tripDistance = 0.0f;
+float prevAccX = 0, prevAccY = 0;
 
 MPU6050 gyro(Wire);
+Command command_u;
+
 void setup()
 {
   // put your setup code here, to run once:
@@ -48,6 +51,7 @@ void setup()
   digitalWrite(led, LOW);
   delay(500);
   digitalWrite(led, HIGH);
+  // send ack to indicate ready to accept data
   prevT = micros();
 }
 
@@ -57,143 +61,166 @@ void loop()
   while (Serial.available() > 0)
   {
     commandData = Serial.readStringUntil('\n');
-    gotData = true;
+    command_u = parseCommand(commandData);
 
     yield();
   }
-
-  if (gotData)
+  /*
+   * According to available spec, process only the following commands:
+   * <Command><SubCommand> where Command is one of:
+   * f - forward
+   * b - backward
+   * l - left
+   * r - right
+   * and SubCommand is an integer value representing the distance in cm
+   * or angle in degrees for turns.
+   * For example:
+   * f100 - move forward 100 cm
+   * b50 - move backward 50 cm
+   * l90 - turn left 90 degrees
+   * r45 - turn right 45 degrees
+   * System should not respond to any other commands.
+   * If no command is received, the system should not do anything.
+   * If a command is received, it should be processed immediately.
+   * If a command is received while another command is being processed,
+   * the new command should not override the previous one.
+   * The system should wait for the previous command to finish.
+   */
+  if (command_u.desiredAction != CommandType::NONE || command_u.desiredAction != CommandType::ERROR)
   {
-    if (commandData[0])
+    switch (command_u.desiredAction)
     {
-      Serial.println("Got Data");
-      cmd = commandData[0];
-      dir = commandData[1];
-      String subCmd = commandData.substring(2, 5);
-      buf = subCmd.toInt();
-      if (cmd == 'm')
-      {
-        thetaDesired = 0;
-      }
-      else if (cmd == 't')
-      {
-        thetaDesired = buf;
-      }
-      tripTime = 0;
-      tripDistance = 0.0f;
-    }
-    // Serial.print(commandData);
-    // Serial.print(", ");
-    // Serial.println(buf);
+    case CommandType::FORWARD:
+    case CommandType::BACKWARD:
+    case CommandType::LEFT:
+    case CommandType::RIGHT:
+      doMove(command_u.desiredAction, command_u.SubCommand);
+      Serial.print("Executed ");
+      Serial.print(command_u.Command);
+      Serial.println(" Command: ");
+      break;
 
-    gotData = false;
+    case CommandType::ERROR:
+    default:
+      Serial.println("Unknown command received");
+      break;
+    }
   }
 
+  // Serial.print(commandData);
+  // Serial.print(", ");
+  // Serial.println(buf);
+
+  gotData = false;
+}
+
+void stopMotors()
+{
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+}
+
+void doMove(CommandType action, float orientation, int distance = 0)
+{
+  int distanceCommand;
+  thetaDesired = orientation;
+  if (action == CommandType::NONE || action == CommandType::ERROR)
+  {
+    stopMotors();
+    Serial.println("No valid command to execute");
+    return;
+  }
+
+  // get orientation from MPU6050
   gyro.update();
   float thetaX = gyro.getGyroAngleX();
   float thetaY = gyro.getGyroAngleY();
   float thetaZ = gyro.getGyroAngleZ();
+
   float accX = gyro.getAccX();
   float accY = gyro.getAccY();
   float theta = atanf(accY / accX) * RAD_TO_DEG;
-  float argL = sqrt(accX * accX + accY * accY);
-  long currT = micros();
-  float t = currT / 1.0e6;
-  float deltaT = ((float)(currT - prevT)) / 1.0e6;
-  prevT = currT;
+  float r = sqrt(accX * accX + accY * accY);
 
-  float numResolved = argL * cos(theta * DEG_TO_RAD);
-  float denResolved = argL * sin(theta * DEG_TO_RAD);
-  float accelerationResolved = numResolved + denResolved;
+  // better to keep working in micros till final
+  // conversion to reduce quantization error
+  long currT = micros();
+  float deltaT = (float)(currT - prevT);
+  float xResolved = r * cos(theta * DEG_TO_RAD);
+  float yResolved = r * cos(theta * DEG_TO_RAD);
+
+  float accelerationResolved = xResolved + yResolved;
   float velocityResolved = accelerationResolved * deltaT;
   float distanceResolved = velocityResolved * deltaT;
   tripDistance += distanceResolved;
 
-  // PID Cooefficients
   float kp = 0.025;
   float ki = 0.12;
 
   double thetaError = thetaDesired - thetaZ;
-  double teRad = thetaError * DEG_TO_RAD;
-  double sinTRad = sin(teRad);
+  double errorRad = thetaError * DEG_TO_RAD;
+  double sinErrorRad = sin(errorRad);
+  double speedScalar = sinErrorRad * nominalSpeed * RAD_TO_DEG;
+  int isStraight = distance != 0;
+  float uSpeed = kp * speedScalar + 60 * isStraight;
 
-  float uSpeed = (kp * sinTRad * nominalSpeed * RAD_TO_DEG);
-  // float uAc = nominalSpeed
+  int vSpeed = (int)abs(uSpeed);
+  // implement saturation block
+  // saturation was used earlier to compensate for
+  // forward/back motion on no error
+  // vSpeed = constrain(vSpeed, 60, 255); // minimum speed to overcome inertia
 
-  int vSpeed = (int)fabs(uSpeed);
-  if (vSpeed > 255)
-    vSpeed = 255;
-  // float sinError = sinh(thetaError);
-  /*
-  Serial.print(thetaZ);
-  Serial.print(",\t");
-  Serial.print(thetaError);
-  Serial.print(",\t");
-  Serial.print(teRad);
-  Serial.print(",\t");
-  Serial.print(sinTRad);
-  Serial.print(",\t");
-  Serial.print(uSpeed);
-  Serial.print(",\t");
-  Serial.println(vSpeed);
-  */
-
-  if (cmd && cmd != 's')
+  if (thetaError < (-1 * error_tolerance))
   {
-    if (thetaError < (-1 * error_tolerance))
-    {
-      // LEFT
-      Serial.println("LEFT");
-      analogWrite(in1, vSpeed);
-      analogWrite(in2, LOW);
-      analogWrite(in3, LOW);
-      analogWrite(in4, vSpeed);
-    }
-    else if (thetaError > error_tolerance)
-    {
-      // RIGHT
-      Serial.println("RIGHT");
-      analogWrite(in1, LOW);
-      analogWrite(in2, vSpeed);
-      analogWrite(in3, vSpeed);
-      analogWrite(in4, LOW);
-    }
-    else
-    {
-      // FORWARD
-      vSpeed = 60;
-      if (dir == '1')
-      {
-        Serial.println("FORWARD");
-        analogWrite(in1, LOW);
-        analogWrite(in2, vSpeed);
-        analogWrite(in3, LOW);
-        analogWrite(in4, vSpeed);
-      }
-      else
-      {
-        Serial.println("REVERSE");
-        analogWrite(in1, vSpeed);
-        analogWrite(in2, LOW);
-        analogWrite(in3, vSpeed);
-        analogWrite(in4, LOW);
-      }
-    }
+    // turn left
+    turn(vSpeed, 0);
+  }
+  else if (thetaError > error_tolerance)
+  {
+    // turn right
+    turn(vSpeed, 1);
   }
   else
   {
-    // STOP
-    Serial.println("STOPPED");
-    digitalWrite(in1, LOW);
-    digitalWrite(in2, LOW);
-    digitalWrite(in3, LOW);
-    digitalWrite(in4, LOW);
+    int l1 = 0, l2 = 0, l3 = 0, l4 = 0;
+    if (action == CommandType::FORWARD || action == CommandType::BACKWARD)
+    {
+      l3 = l1 = action == CommandType::FORWARD ? 0 : vSpeed;
+      l4 = l2 = action == CommandType::FORWARD ? vSpeed : 0;
+      // l3 = action == CommandType::FORWARD ? 0 : vSpeed;
+      // l4 = action == CommandType::FORWARD ? vSpeed : 0;
+    }
+    analogWrite(in1, l1);
+    analogWrite(in2, l2);
+    analogWrite(in3, l3);
+    analogWrite(in4, l4);
   }
-  Serial.println(tripDistance);
+}
 
-  // forward
-  // analogWrite(in1, vSpeed);
-  // digitalWrite(in2, LOW);
-  // analogWrite(in3, vSpeed);
-  // digitalWrite(in4, LOW);
+void turn(uint8_t speed, uint8_t direction)
+{
+  int l1 = 0, l2 = 0, l3 = 0, l4 = 0;
+  if (direction)
+  {
+    // turn left
+    l1 = speed;
+    l2 = 0;
+    l3 = 0;
+    l4 = speed;
+  }
+  else
+  {
+    // turn right
+    l1 = 0;
+    l2 = speed;
+    l3 = speed;
+    l4 = 0;
+  }
+  // write motor speeds to pins
+  analogWrite(in1, l1);
+  analogWrite(in2, l2);
+  analogWrite(in3, l3);
+  analogWrite(in4, l4);
 }
