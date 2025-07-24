@@ -106,8 +106,6 @@ void loop()
       break;
     }
   }
-  {
-  }
 
   // Serial.print(commandData);
   // Serial.print(", ");
@@ -124,13 +122,17 @@ void stopMotors()
   digitalWrite(in4, LOW);
 }
 
-void doMove(CommandType action, float orientation)
+void doMove(CommandType action, float orientation, int distance = 0)
 {
+  int distanceCommand;
+  thetaDesired = orientation;
   if (action == CommandType::NONE || action == CommandType::ERROR)
   {
+    stopMotors();
     Serial.println("No valid command to execute");
     return;
   }
+
   // get orientation from MPU6050
   gyro.update();
   float thetaX = gyro.getGyroAngleX();
@@ -157,16 +159,18 @@ void doMove(CommandType action, float orientation)
   float kp = 0.025;
   float ki = 0.12;
 
-  double thetaError = orientation - thetaZ;
+  double thetaError = thetaDesired - thetaZ;
   double errorRad = thetaError * DEG_TO_RAD;
   double sinErrorRad = sin(errorRad);
   double speedScalar = sinErrorRad * nominalSpeed * RAD_TO_DEG;
-  float uSpeed = kp * speedScalar;
+  int isStraight = distance != 0;
+  float uSpeed = kp * speedScalar + 60 * isStraight;
 
   int vSpeed = (int)abs(uSpeed);
   // implement saturation block
-  vSpeed = constrain(vSpeed, 60, 255); // minimum speed to overcome inertia
-  // int leftSpeed = 0, rightSpeed = 0;
+  // saturation was used earlier to compensate for
+  // forward/back motion on no error
+  // vSpeed = constrain(vSpeed, 60, 255); // minimum speed to overcome inertia
 
   if (thetaError < (-1 * error_tolerance))
   {
@@ -180,8 +184,19 @@ void doMove(CommandType action, float orientation)
   }
   else
   {
-    // go straight
+    int l1 = 0, l2 = 0, l3 = 0, l4 = 0;
+    if (action == CommandType::FORWARD || action == CommandType::BACKWARD)
+    {
+      l3 = l1 = action == CommandType::FORWARD ? 0 : vSpeed;
+      l4 = l2 = action == CommandType::FORWARD ? vSpeed : 0;
+      // l3 = action == CommandType::FORWARD ? 0 : vSpeed;
+      // l4 = action == CommandType::FORWARD ? vSpeed : 0;
     }
+    analogWrite(in1, l1);
+    analogWrite(in2, l2);
+    analogWrite(in3, l3);
+    analogWrite(in4, l4);
+  }
 }
 
 void turn(uint8_t speed, uint8_t direction)
