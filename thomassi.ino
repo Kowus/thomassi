@@ -91,31 +91,13 @@ void loop()
     switch (command_u.desiredAction)
     {
     case CommandType::FORWARD:
-      Serial.print("Moving forward ");
-      Serial.print(command_u.SubCommand);
-      Serial.println(" cm");
-      // moveDistance(command_u.SubCommand);
-      break;
-
     case CommandType::BACKWARD:
-      Serial.print("Moving backward ");
-      Serial.print(command_u.SubCommand);
-      Serial.println(" cm");
-      // moveDistance(-command_u.SubCommand);
-      break;
-
     case CommandType::LEFT:
-      Serial.print("Turning left ");
-      Serial.print(command_u.SubCommand);
-      Serial.println(" degrees");
-      // turnLeft(command_u.SubCommand);
-      break;
-
     case CommandType::RIGHT:
-      Serial.print("Turning right ");
-      Serial.print(command_u.SubCommand);
-      Serial.println(" degrees");
-      // turnRight(command_u.SubCommand);
+      doMove(command_u.desiredAction, command_u.SubCommand);
+      Serial.print("Executed ");
+      Serial.print(command_u.Command);
+      Serial.println(" Command: ");
       break;
 
     case CommandType::ERROR:
@@ -144,7 +126,13 @@ void stopMotors()
 
 void doMove(CommandType action, float orientation)
 {
-  // gyro.
+  if (action == CommandType::NONE || action == CommandType::ERROR)
+  {
+    Serial.println("No valid command to execute");
+    return;
+  }
+  // get orientation from MPU6050
+  gyro.update();
   float thetaX = gyro.getGyroAngleX();
   float thetaY = gyro.getGyroAngleY();
   float thetaZ = gyro.getGyroAngleZ();
@@ -170,4 +158,54 @@ void doMove(CommandType action, float orientation)
   float ki = 0.12;
 
   double thetaError = orientation - thetaZ;
+  double errorRad = thetaError * DEG_TO_RAD;
+  double sinErrorRad = sin(errorRad);
+  double speedScalar = sinErrorRad * nominalSpeed * RAD_TO_DEG;
+  float uSpeed = kp * speedScalar;
+
+  int vSpeed = (int)abs(uSpeed);
+  // implement saturation block
+  vSpeed = constrain(vSpeed, 60, 255); // minimum speed to overcome inertia
+  // int leftSpeed = 0, rightSpeed = 0;
+
+  if (thetaError < (-1 * error_tolerance))
+  {
+    // turn left
+    turn(vSpeed, 0);
+  }
+  else if (thetaError > error_tolerance)
+  {
+    // turn right
+    turn(vSpeed, 1);
+  }
+  else
+  {
+    // go straight
+    }
+}
+
+void turn(uint8_t speed, uint8_t direction)
+{
+  int l1 = 0, l2 = 0, l3 = 0, l4 = 0;
+  if (direction)
+  {
+    // turn left
+    l1 = speed;
+    l2 = 0;
+    l3 = 0;
+    l4 = speed;
+  }
+  else
+  {
+    // turn right
+    l1 = 0;
+    l2 = speed;
+    l3 = speed;
+    l4 = 0;
+  }
+  // write motor speeds to pins
+  analogWrite(in1, l1);
+  analogWrite(in2, l2);
+  analogWrite(in3, l3);
+  analogWrite(in4, l4);
 }
