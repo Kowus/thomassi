@@ -51,6 +51,7 @@ void setup()
   digitalWrite(led, LOW);
   delay(500);
   digitalWrite(led, HIGH);
+  // send ack to indicate ready to accept data
   prevT = micros();
 }
 
@@ -60,7 +61,7 @@ void loop()
   while (Serial.available() > 0)
   {
     commandData = Serial.readStringUntil('\n');
-    gotData = true;
+    command_u = parseCommand(commandData);
 
     yield();
   }
@@ -85,30 +86,88 @@ void loop()
    * the new command should not override the previous one.
    * The system should wait for the previous command to finish.
    */
-  if (gotData)
+  if (command_u.desiredAction != CommandType::NONE || command_u.desiredAction != CommandType::ERROR)
   {
-    if (commandData[0])
+    switch (command_u.desiredAction)
     {
-      // Serial.println("Got Data");
-      cmd = commandData[0];
-      dir = commandData[1];
-      String subCmd = commandData.substring(2, 5);
-      buf = subCmd.toInt();
-      if (cmd == 'm')
-      {
-        thetaDesired = 0;
-      }
-      else if (cmd == 't')
-      {
-        thetaDesired = buf;
-      }
-      tripTime = 0;
-      tripDistance = 0.0f;
-    }
-    // Serial.print(commandData);
-    // Serial.print(", ");
-    // Serial.println(buf);
+    case CommandType::FORWARD:
+      Serial.print("Moving forward ");
+      Serial.print(command_u.SubCommand);
+      Serial.println(" cm");
+      // moveDistance(command_u.SubCommand);
+      break;
 
-    gotData = false;
+    case CommandType::BACKWARD:
+      Serial.print("Moving backward ");
+      Serial.print(command_u.SubCommand);
+      Serial.println(" cm");
+      // moveDistance(-command_u.SubCommand);
+      break;
+
+    case CommandType::LEFT:
+      Serial.print("Turning left ");
+      Serial.print(command_u.SubCommand);
+      Serial.println(" degrees");
+      // turnLeft(command_u.SubCommand);
+      break;
+
+    case CommandType::RIGHT:
+      Serial.print("Turning right ");
+      Serial.print(command_u.SubCommand);
+      Serial.println(" degrees");
+      // turnRight(command_u.SubCommand);
+      break;
+
+    case CommandType::ERROR:
+    default:
+      Serial.println("Unknown command received");
+      break;
+    }
   }
+  {
+  }
+
+  // Serial.print(commandData);
+  // Serial.print(", ");
+  // Serial.println(buf);
+
+  gotData = false;
+}
+
+void stopMotors()
+{
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+}
+
+void doMove(CommandType action, float orientation)
+{
+  // gyro.
+  float thetaX = gyro.getGyroAngleX();
+  float thetaY = gyro.getGyroAngleY();
+  float thetaZ = gyro.getGyroAngleZ();
+
+  float accX = gyro.getAccX();
+  float accY = gyro.getAccY();
+  float theta = atanf(accY / accX) * RAD_TO_DEG;
+  float r = sqrt(accX * accX + accY * accY);
+
+  // better to keep working in micros till final
+  // conversion to reduce quantization error
+  long currT = micros();
+  float deltaT = (float)(currT - prevT);
+  float xResolved = r * cos(theta * DEG_TO_RAD);
+  float yResolved = r * cos(theta * DEG_TO_RAD);
+
+  float accelerationResolved = xResolved + yResolved;
+  float velocityResolved = accelerationResolved * deltaT;
+  float distanceResolved = velocityResolved * deltaT;
+  tripDistance += distanceResolved;
+
+  float kp = 0.025;
+  float ki = 0.12;
+
+  double thetaError = orientation - thetaZ;
 }
