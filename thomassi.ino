@@ -25,6 +25,7 @@ bool gotData = false;
 int provisionalDuration = 0;
 float tripDistance = 0.0f;
 float prevAccX = 0, prevAccY = 0;
+void doMove(CommandType action, float orientation, int distance = 0);
 
 MPU6050 gyro(Wire);
 Command command_u;
