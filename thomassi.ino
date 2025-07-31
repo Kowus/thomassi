@@ -26,6 +26,9 @@ int provisionalDuration = 0;
 float tripDistance = 0.0f;
 
 MPU6050 gyro(Wire);
+
+int initAngleZ = 0;
+float currentTheta = 0.0f;
 void setup()
 {
   // put your setup code here, to run once:
@@ -71,11 +74,11 @@ void loop()
       dir = commandData[1];
       String subCmd = commandData.substring(2, 5);
       buf = subCmd.toInt();
-      if (cmd == 'm')
+      if (cmd == 'f' || cmd == 'b')
       {
         thetaDesired = 0;
       }
-      else if (cmd == 't')
+      else if (cmd == 'l' || cmd == 'r')
       {
         thetaDesired = buf;
       }
@@ -138,47 +141,73 @@ void loop()
   Serial.println(vSpeed);
   */
 
-  if (cmd && cmd != 's')
+  if (cmd && cmd != 's' && (cmd == 'f' || cmd == 'b'))
   {
+    int isFwd = cmd == 'f';
     if (thetaError < (-1 * error_tolerance))
     {
       // LEFT
       Serial.println("LEFT");
-      analogWrite(in1, vSpeed);
-      analogWrite(in2, LOW);
-      analogWrite(in3, LOW);
-      analogWrite(in4, vSpeed);
+      analogWrite(in1, vSpeed * isFwd);
+      analogWrite(in2, vSpeed * !isFwd);
+      analogWrite(in3, vSpeed * !isFwd);
+      analogWrite(in4, vSpeed * isFwd);
     }
     else if (thetaError > error_tolerance)
     {
       // RIGHT
       Serial.println("RIGHT");
-      analogWrite(in1, LOW);
-      analogWrite(in2, vSpeed);
-      analogWrite(in3, vSpeed);
-      analogWrite(in4, LOW);
+      analogWrite(in1, vSpeed * !isFwd);
+      analogWrite(in2, vSpeed * isFwd);
+      analogWrite(in3, vSpeed * isFwd);
+      analogWrite(in4, vSpeed * !isFwd);
     }
     else
     {
       // FORWARD
       vSpeed = 60;
-      if (dir == '1')
-      {
-        Serial.println("FORWARD");
-        analogWrite(in1, LOW);
-        analogWrite(in2, vSpeed);
-        analogWrite(in3, LOW);
-        analogWrite(in4, vSpeed);
-      }
-      else
-      {
-        Serial.println("REVERSE");
-        analogWrite(in1, vSpeed);
-        analogWrite(in2, LOW);
-        analogWrite(in3, vSpeed);
-        analogWrite(in4, LOW);
-      }
+      Serial.println("FORWARD");
+      analogWrite(in1, vSpeed * !isFwd);
+      analogWrite(in2, vSpeed * isFwd);
+      analogWrite(in3, vSpeed * !isFwd);
+      analogWrite(in4, vSpeed * isFwd);
     }
+  }
+  else if (cmd && cmd != 's' && (cmd == 'l' || cmd == 'r'))
+  {
+    if (!initAngleZ)
+    {
+      currentTheta = gyro.getGyroAngleZ();
+      initAngleZ = 1;
+    }
+    // TURN
+    int turnDirection = (cmd == 'l');
+    int needsTurn = fabs(currentTheta - thetaZ) < (thetaDesired + error_tolerance);
+    // Serial.println("TURN");
+    analogWrite(in1, vSpeed * turnDirection * needsTurn);
+    analogWrite(in2, vSpeed * !turnDirection * needsTurn);
+    analogWrite(in3, vSpeed * turnDirection * needsTurn);
+    analogWrite(in4, vSpeed * !turnDirection * needsTurn);
+    if (!needsTurn)
+      initAngleZ = 0; // reset init angle if turn is done
+    /*
+    if (cmd == 'l')
+    {
+      // LEFT
+      analogWrite(in1, vSpeed);
+      digitalWrite(in2, LOW);
+      analogWrite(in3, vSpeed);
+      digitalWrite(in4, LOW);
+    }
+    else if (dir == 'r')
+    {
+      // RIGHT
+      digitalWrite(in1, LOW);
+      analogWrite(in2, vSpeed);
+      digitalWrite(in3, LOW);
+      analogWrite(in4, vSpeed);
+    }
+    */
   }
   else
   {
@@ -189,7 +218,7 @@ void loop()
     digitalWrite(in3, LOW);
     digitalWrite(in4, LOW);
   }
-  Serial.println(tripDistance);
+  // Serial.println(tripDistance);
 
   // forward
   // analogWrite(in1, vSpeed);
