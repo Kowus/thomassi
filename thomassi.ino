@@ -1,6 +1,6 @@
 #include <MPU6050_tockn.h>
 #include <Wire.h>
-#include <Math.h>
+#include <math.h>
 #include <string.h>
 
 // ESP
